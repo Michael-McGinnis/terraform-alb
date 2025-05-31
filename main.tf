@@ -18,34 +18,35 @@ data "aws_availability_zones" "all" {}
 
 # VPC Module (Public only & free-tier)
 module "vpc" {
-    source = "terraform-aws-modules/vpc/aws"
-    version = "5.5.0"
+  source  = "terraform-aws-modules/vpc/aws"
+  version = "5.5.0"
 
-    name                    = "${var.project}-vpc"
-    cidr                    = "10.0.0.0/16"
+  name = "${var.project}-vpc"
+  cidr = "10.0.0.0/16"
 
-    # Using slice, pick first AZ based on var.az_count
-    azs                     = slice(data.aws_availability_zones.all.names, 0, var.az_count)
-    # One /24 public subnet per AZ
-    public_subnets          = ["10.0.1.0/24", "10.0.2.0/24"]
+  # Using slice, pick first AZ based on var.az_count
+  azs = slice(data.aws_availability_zones.all.names, 0, var.az_count)
+  # One /24 public subnet per AZ
+  public_subnets = ["10.0.1.0/24", "10.0.2.0/24"]
 
-    # DNS hostname is required for the ALB to resolve instance names
-    enable_dns_hostnames    = true
+  # DNS hostname is required for the ALB to resolve instance names
+  enable_dns_hostnames = true
 }
 
 # Find the latest 2023 AMI
 data "aws_ami" "al2023" {
-  most_recent   = true
-  owners        = ["amazon"]
+  most_recent = true
+  owners      = ["amazon"]
   filter {
-    name = "name" 
+    name   = "name"
     values = ["al2023-ami-*-x86_64"]
   }
 }
 
-# Convert 0..(az_count-1) into a set of strings for `for_each`
 locals {
-  az_indexes = toset(range(var.az_count))
+  # range() returns numbers 0..az_count-1
+  # tostring(i) converts each number to a string, satisfying for_each
+  az_indexes = toset([for i in range(var.az_count) : tostring(i)])
 }
 
 # EC2 instance; 1 per AZ
@@ -53,20 +54,20 @@ module "web" {
   source  = "terraform-aws-modules/ec2-instance/aws"
   version = "5.7.0"
 
-  for_each                  = local.az_indexes # Create N identical modules
-  name                      = "${var.project}-web-${each.key}"
-  ami                       = data.aws_ami.al2023.id
-  instance_type             = "t2.micro"
+  for_each      = local.az_indexes # Create N identical modules
+  name          = "${var.project}-web-${each.key}"
+  ami           = data.aws_ami.al2023.id
+  instance_type = "t2.micro"
 
   # Pin each instance to a different subnet (one per AZ)
-  subnet_id  = module.vpc.public_subnets[each.key]
+  subnet_id = module.vpc.public_subnets[each.key]
 
-  vpc_security_group_ids    = [module.vpc.default_security_group_id]
+  vpc_security_group_ids = [module.vpc.default_security_group_id]
 
   # Attach the script
-  user_data                 = file("${path.module}/userdata.sh")
+  user_data = file("${path.module}/userdata.sh")
 
-  tags                      = {Project = var.project}
+  tags = { Project = var.project }
 }
 
 # List of instance IDs
@@ -74,32 +75,87 @@ output "web_instance_ids" {
   value = [for m in module.web : m.id]
 }
 
-# ALB module (layer 7)
-module "alb" {
-  source  = "terraform-aws-modules/alb/aws"
-  version = "9.5.0"
+# ────────────────────────────────────────────────────────────────────────────
+# Security group for ALB: allows ALB to accept HTTP traffic from the world
+# ────────────────────────────────────────────────────────────────────────────
+resource "aws_security_group" "alb" {
+  name_prefix = "${var.project}-alb-sg-" # Random suffix
+  description = "Allow HTTP in, all out"
+  vpc_id      = module.vpc.vpc_id # SG inside the VPC
 
-  name                  = ":{var.project}-alb"
-  load_balancer_type    = "application"
-  vpc_id                = module.vpc.vpc_id
-  subnets               = module.vpc.public_subnets
+  ingress { # Open port 80 to outside world
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
 
-# Target group that points to all instances
-  target_groups = [{
-    name_prefix  = "tg"
-    port         = 80
-    protocol     = "HTTP"
-    target_type  = "instance"
-    health_check = {path = "/", matcher = "200"}
+  egress { # Allow all outbound traffic
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
 
-    # Map every instance ID into the TG
-    targets      = [for id in module.web.imstance_ids: {id = id, port = 80}]
-  }]
-
-# One listener on port 80 forwarding to TG at index 1 = TG[0]
-  listeners = [{
-    port        = 80
-    protocol    = "HTTP"
-    target_group_index = 0
-  }]
+  tags = { Name = "${var.project}-alb-sg" }
 }
+
+# ────────────────
+# Load balancer
+# ────────────────
+resource "aws_lb" "alb" {
+  name               = "${var.project}-alb" # <= 32 chars
+  internal           = false # Internet facing
+  load_balancer_type = "application"
+  security_groups    = [aws_security_group.alb.id]
+  subnets            = module.vpc.public_subnets
+
+  tags = { Name = "${var.project}-alb" }
+}
+
+# ─────────────────────────────────────
+# Target group for the web instances
+# ─────────────────────────────────────
+resource "aws_lb_target_group" "web" {
+  name_prefix = "tg-" # AWS adds random suffix
+  port        = 80
+  protocol    = "HTTP"
+  target_type = "instance" # EC2 Instance ID
+  vpc_id      = module.vpc.vpc_id
+
+  health_check { # Pings "/ (root of the web server)" every 30 seconds; 2 failures = unhealthy
+    path                = "/"
+    matcher             = "200"
+    interval            = 30
+    unhealthy_threshold = 2
+  }
+
+  tags = { Name = "${var.project}-tg" }
+}
+
+# ───────────────────────────────────────────────
+# Listener – forwards HTTP to the target group
+# ───────────────────────────────────────────────
+resource "aws_lb_listener" "http" {
+  load_balancer_arn = aws_lb.alb.arn
+  port              = 80
+  protocol          = "HTTP"
+
+  default_action { # Forward everything to the TG
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.web.arn
+  }
+}
+
+# ──────────────────────────────────────────────────────────
+# Attach every EC2 instance to the target group
+# ──────────────────────────────────────────────────────────
+resource "aws_lb_target_group_attachment" "web" {
+  # # module.web is a map created via `for_each` (keys "0", "1", …); keys known at plan time
+  for_each = module.web
+
+  target_group_arn = aws_lb_target_group.web.arn
+  target_id        = each.value.id # instance ID now comes from the value
+  port             = 80
+}
+

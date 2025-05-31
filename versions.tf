@@ -7,8 +7,8 @@ terraform {
   required_version = ">= 1.6" # Terraform CLI version guard
   required_providers {
     aws = {
-        source = "hashicorp/aws"
-        version = "5.33.0, <6.0.0" # Satisfies all modules
+      source  = "hashicorp/aws"
+      version = "5.33.0, <6.0.0" # Satisfies all modules
     }
   }
 }
@@ -16,5 +16,5 @@ terraform {
 # Single provide block. Region is passed as a variable for flexibility.
 
 provider "aws" {
-    region = var.aws_region
+  region = var.aws_region
 }
