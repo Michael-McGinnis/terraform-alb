@@ -13,7 +13,6 @@
  VPC module (public-only, free-tier friendly) */
 
 # Gather all AZ names in the chosen region
-
 data "aws_availability_zones" "all" {}
 
 # VPC Module (Public only & free-tier)
@@ -49,12 +48,14 @@ locals {
   az_indexes = toset([for i in range(var.az_count) : tostring(i)])
 }
 
-# EC2 instance; 1 per AZ
+# ────────────────────────────────────────────────────────────────────────────
+# EC2 module (“web” servers); 1 per AZ
+# ────────────────────────────────────────────────────────────────────────────
 module "web" {
   source  = "terraform-aws-modules/ec2-instance/aws"
   version = "5.7.0"
 
-  for_each      = local.az_indexes # Create N identical modules
+  for_each      = local.az_indexes  # Create N identical modules
   name          = "${var.project}-web-${each.key}"
   ami           = data.aws_ami.al2023.id
   instance_type = "t2.micro"
@@ -62,7 +63,12 @@ module "web" {
   # Pin each instance to a different subnet (one per AZ)
   subnet_id = module.vpc.public_subnets[each.key]
 
-  vpc_security_group_ids = [module.vpc.default_security_group_id]
+  # ─────────────────────────────────────────────────────────────────────────────
+  # FIX: Replace default SG with dedicated "web" SG so that ALB health checks 
+  #      (port 80) can reach EC2 instances. Previously, instances lived in the 
+  #      default VPC SG, which blocked ALB traffic. Now they use aws_security_group.web.
+  # ─────────────────────────────────────────────────────────────────────────────
+  vpc_security_group_ids = [aws_security_group.web.id]
 
   # Attach the script
   user_data = file("${path.module}/userdata.sh")
@@ -81,16 +87,16 @@ output "web_instance_ids" {
 resource "aws_security_group" "alb" {
   name_prefix = "${var.project}-alb-sg-" # Random suffix
   description = "Allow HTTP in, all out"
-  vpc_id      = module.vpc.vpc_id # SG inside the VPC
+  vpc_id      = module.vpc.vpc_id  # SG inside the VPC
 
-  ingress { # Open port 80 to outside world
+  ingress {  # Open port 80 to outside world
     from_port   = 80
     to_port     = 80
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  egress { # Allow all outbound traffic
+  egress {  # Allow all outbound traffic
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
@@ -100,12 +106,38 @@ resource "aws_security_group" "alb" {
   tags = { Name = "${var.project}-alb-sg" }
 }
 
+# ────────────────────────────────────────────────────────────────────────────
+# Security Group for Web Instances: allows only ALB SG to reach port 80
+# ────────────────────────────────────────────────────────────────────────────
+resource "aws_security_group" "web" {
+  name_prefix = "${var.project}-web-sg-"  # Random suffix, e.g. "hello-alb-web-sg-"
+  description = "Allow HTTP (80) only from the ALB SG"
+  vpc_id      = module.vpc.vpc_id  # Same VPC as ALB and instances
+
+  ingress {
+    description            = "Allow ALB health checks and HTTP traffic"
+    from_port              = 80
+    to_port                = 80
+    protocol               = "tcp"
+    security_groups        = [aws_security_group.alb.id]  # Source = ALB SG
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = { Name = "${var.project}-web-sg" }
+}
+
 # ────────────────
 # Load balancer
 # ────────────────
 resource "aws_lb" "alb" {
-  name               = "${var.project}-alb" # <= 32 chars
-  internal           = false # Internet facing
+  name               = "${var.project}-alb"  # <= 32 chars
+  internal           = false  # Internet facing
   load_balancer_type = "application"
   security_groups    = [aws_security_group.alb.id]
   subnets            = module.vpc.public_subnets
@@ -117,13 +149,13 @@ resource "aws_lb" "alb" {
 # Target group for the web instances
 # ─────────────────────────────────────
 resource "aws_lb_target_group" "web" {
-  name_prefix = "tg-" # AWS adds random suffix
+  name_prefix = "tg-"  # AWS adds random suffix
   port        = 80
   protocol    = "HTTP"
-  target_type = "instance" # EC2 Instance ID
+  target_type = "instance"  # EC2 Instance ID
   vpc_id      = module.vpc.vpc_id
 
-  health_check { # Pings "/ (root of the web server)" every 30 seconds; 2 failures = unhealthy
+  health_check {  # Pings “/” (root of the web server) every 30 seconds; 2 failures = unhealthy
     path                = "/"
     matcher             = "200"
     interval            = 30
@@ -141,7 +173,7 @@ resource "aws_lb_listener" "http" {
   port              = 80
   protocol          = "HTTP"
 
-  default_action { # Forward everything to the TG
+  default_action {  # Forward everything to the TG
     type             = "forward"
     target_group_arn = aws_lb_target_group.web.arn
   }
@@ -151,11 +183,10 @@ resource "aws_lb_listener" "http" {
 # Attach every EC2 instance to the target group
 # ──────────────────────────────────────────────────────────
 resource "aws_lb_target_group_attachment" "web" {
-  # # module.web is a map created via `for_each` (keys "0", "1", …); keys known at plan time
+  # module.web is a map created via `for_each` (keys "0", "1", …); keys known at plan time
   for_each = module.web
 
   target_group_arn = aws_lb_target_group.web.arn
-  target_id        = each.value.id # instance ID now comes from the value
+  target_id        = each.value.id  # instance ID
   port             = 80
 }
-
