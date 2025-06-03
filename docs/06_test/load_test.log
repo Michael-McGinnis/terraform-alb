@@ -1,0 +1,27 @@
+Starting 1-hour load test at Tue Jun  3 14:20:50 EDT 2025. Hitting http://alb.helloalb.ip-ddns.com...
+[14:23:08] Request #100 → Status: 200
+[14:25:30] Request #200 → Status: 200
+[14:27:49] Request #300 → Status: 200
+[14:30:11] Request #400 → Status: 200
+[14:32:37] Request #500 → Status: 200
+[14:34:55] Request #600 → Status: 200
+[14:37:16] Request #700 → Status: 200
+[14:39:43] Request #800 → Status: 200
+[14:42:10] Request #900 → Status: 200
+[14:44:25] Request #1000 → Status: 200
+[14:46:37] Request #1100 → Status: 200
+[14:49:02] Request #1200 → Status: 200
+[14:51:17] Request #1300 → Status: 200
+[14:53:34] Request #1400 → Status: 200
+[14:56:01] Request #1500 → Status: 200
+[14:58:18] Request #1600 → Status: 200
+[15:00:33] Request #1700 → Status: 200
+[15:02:45] Request #1800 → Status: 200
+[15:05:06] Request #1900 → Status: 200
+[15:07:27] Request #2000 → Status: 200
+[15:09:50] Request #2100 → Status: 200
+[15:12:10] Request #2200 → Status: 200
+[15:14:25] Request #2300 → Status: 200
+[15:16:41] Request #2400 → Status: 200
+[15:19:01] Request #2500 → Status: 200
+Load test complete at Tue Jun  3 15:20:50 EDT 2025. Total requests sent: 2583.
