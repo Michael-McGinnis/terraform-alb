@@ -21,8 +21,6 @@
 ## mermaid
 
 graph LR
-  %% ────────────────────────
-  %% VPC Subgraph
   subgraph VPC
     VPCLabel["10.0.0.0/16 VPC (us-east-1)"]
     AZ1["AZ us-east-1a"]
@@ -37,31 +35,19 @@ graph LR
     Subnet2 --> EC2_1["EC2 (t2.micro)"]
   end
 
-  %% ────────────────────────────────
-  %% Internet Node
   Internet["🌐 Internet"]
 
-  %% ────────────────────────
-  %% DNS (CNAME) Node
   DNS["ClouDNS CNAME\nalb.helloalb.ip-ddns.com"]
 
-  %% Internet ↔ DNS ↔ ALB  (user↔DNS and DNS↔ALB can be bidirectional if you want to show
-  %% that DNS “answers” back, but often we just draw Internet-->DNS-->ALB)
   Internet <--> DNS  
   DNS <--> ALB
 
-  %% ────────────────────────────────
-  %% Application Load Balancer
   ALB["Application Load Balancer"]
 
-  %% ALB ↔ EC2 instances (to show request/response, health checks, etc.)
   EC2_0 <--> ALB
   EC2_1 <--> ALB
 
-  %% ────────────────────────────────
-  %% CloudWatch Metrics  (metrics flow one way, from ALB into CloudWatch)
   CW_REQ["NewConnectionCount"]
   CW_LAT["TargetResponseTime"]
   ALB --> CW_REQ
   ALB --> CW_LAT
-
