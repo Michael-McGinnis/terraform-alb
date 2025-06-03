@@ -69,6 +69,8 @@ module "web" {
   #      default VPC SG, which blocked ALB traffic. Now they use aws_security_group.web.
   # ─────────────────────────────────────────────────────────────────────────────
   vpc_security_group_ids = [aws_security_group.web.id]
+  associate_public_ip_address = true
+  key_name                    = "hello-alb"
 
   # Attach the script
   user_data = file("${path.module}/userdata.sh")
